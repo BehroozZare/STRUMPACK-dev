@@ -1,0 +1,2 @@
+sudo apt-get install libscotch-dev libptscotch-dev
+cmake .. -DCMAKE_INSTALL_PREFIX=/home/behrooz/Desktop/Last_Project/STRUMPACK-dev/install -DCMAKE_BUILD_TYPE=Release

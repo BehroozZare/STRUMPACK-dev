@@ -177,59 +177,133 @@ else()
 
 endif()
 
-# Check version
-if( EXISTS ${ParMETIS_INCLUDE_DIR}/parmetis.h )
-
-  set( version_pattern 
-  "^#define[\t ]+ParMETIS_(MAJOR|MINOR|SUBMINOR)_VERSION[\t ]+([0-9\\.]+)$"
+# If not found, try to download and build with FetchContent
+if(NOT ParMETIS_LIBRARIES OR NOT ParMETIS_INCLUDE_DIR)
+  message(STATUS "ParMETIS not found on system, attempting to download and build...")
+  
+  include(FetchContent)
+  
+  # ParMETIS requires GKlib and METIS as dependencies
+  # Download and build GKlib first (required for ParMETIS build)
+  # Using a specific stable commit that works with METIS 5.1.0 and ParMETIS
+  FetchContent_Declare(
+    gklib
+    GIT_REPOSITORY https://github.com/KarypisLab/GKlib.git
+    GIT_TAG        8bd6bad750b2b0d90800c632cf18e8ee93ad72d7
   )
-  file( STRINGS ${ParMETIS_INCLUDE_DIR}/parmetis.h parmetis_version
-        REGEX ${version_pattern} )
   
-  foreach( match ${parmetis_version} )
+  # Build GKlib
+  set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build shared libraries" FORCE)
+  FetchContent_MakeAvailable(gklib)
   
-    if(ParMETIS_VERSION_STRING)
-      set(ParMETIS_VERSION_STRING "${ParMETIS_VERSION_STRING}.")
+  # Create include directory structure that ParMETIS expects
+  # GKlib headers are in the root, but ParMETIS expects them in include/
+  file(MAKE_DIRECTORY ${gklib_SOURCE_DIR}/include)
+  file(GLOB GKLIB_HEADERS "${gklib_SOURCE_DIR}/*.h")
+  foreach(header ${GKLIB_HEADERS})
+    get_filename_component(header_name ${header} NAME)
+    if(NOT EXISTS "${gklib_SOURCE_DIR}/include/${header_name}")
+      file(CREATE_LINK ${header} "${gklib_SOURCE_DIR}/include/${header_name}" SYMBOLIC)
     endif()
-  
-    string(REGEX REPLACE ${version_pattern} 
-      "${ParMETIS_VERSION_STRING}\\2" 
-      ParMETIS_VERSION_STRING ${match}
-    )
-  
-    set(ParMETIS_VERSION_${CMAKE_MATCH_1} ${CMAKE_MATCH_2})
-  
   endforeach()
   
-  unset( parmetis_version )
-  unset( version_pattern )
+  message(STATUS "GKlib downloaded and built successfully")
+  
+  # Download METIS (if not already found)
+  # Using git version compatible with the ParMETIS commit
+  if(NOT TARGET METIS::metis)
+    FetchContent_Declare(
+      metis
+      GIT_REPOSITORY https://github.com/KarypisLab/METIS.git
+      GIT_TAG        94c03a6e2d1860128c2d0675cbbb86ad4f261256
+    )
+    
+    FetchContent_MakeAvailable(metis)
+    message(STATUS "METIS downloaded and configured successfully")
+  endif()
+  
+  # Now download and configure ParMETIS with proper paths
+  # Using specific commit compatible with METIS 5.1.0
+  FetchContent_Declare(
+    parmetis
+    GIT_REPOSITORY https://github.com/KarypisLab/ParMETIS.git
+    GIT_TAG        14d4bfe3848979d0c0610aac585f3e38746e9fad
+  )
+  
+  # Configure ParMETIS build options
+  set(BUILD_TESTING OFF CACHE BOOL "Build ParMETIS tests" FORCE)
+  set(GKLIB_PATH ${gklib_SOURCE_DIR} CACHE PATH "Path to GKlib" FORCE)
+  set(METIS_PATH ${metis_SOURCE_DIR} CACHE PATH "Path to METIS" FORCE)
+  
+  FetchContent_MakeAvailable(parmetis)
+  
+  if(parmetis_POPULATED)
+    message(STATUS "ParMETIS downloaded and configured successfully")
+    set(ParMETIS_INCLUDE_DIR ${parmetis_SOURCE_DIR}/include)
+    set(ParMETIS_LIBRARIES parmetis)
+    set(ParMETIS_FOUND TRUE)
+    # METIS variables are already set from METIS::metis target
+    if(NOT METIS_FOUND)
+      set(METIS_INCLUDE_DIR ${metis_SOURCE_DIR}/include)
+      set(METIS_LIBRARIES metis)
+      set(METIS_FOUND TRUE)
+    endif()
+  endif()
+else()
+  # Check version
+  if( EXISTS ${ParMETIS_INCLUDE_DIR}/parmetis.h )
 
+    set( version_pattern 
+    "^#define[\t ]+ParMETIS_(MAJOR|MINOR|SUBMINOR)_VERSION[\t ]+([0-9\\.]+)$"
+    )
+    file( STRINGS ${ParMETIS_INCLUDE_DIR}/parmetis.h parmetis_version
+          REGEX ${version_pattern} )
+    
+    foreach( match ${parmetis_version} )
+    
+      if(ParMETIS_VERSION_STRING)
+        set(ParMETIS_VERSION_STRING "${ParMETIS_VERSION_STRING}.")
+      endif()
+    
+      string(REGEX REPLACE ${version_pattern} 
+        "${ParMETIS_VERSION_STRING}\\2" 
+        ParMETIS_VERSION_STRING ${match}
+      )
+    
+      set(ParMETIS_VERSION_${CMAKE_MATCH_1} ${CMAKE_MATCH_2})
+    
+    endforeach()
+    
+    unset( parmetis_version )
+    unset( version_pattern )
+
+  endif()
+
+  # Check ILP64 (Inherits from METIS)
+  if( METIS_FOUND )
+
+    set( ParMETIS_USES_ILP64 ${METIS_USES_ILP64} )
+
+  endif()
+
+  # Handle components
+  if( ParMETIS_USES_ILP64 )
+    set( ParMETIS_ilp64_FOUND TRUE )
+  endif()
+
+
+
+
+  # Determine if we've found ParMETIS
+  mark_as_advanced( ParMETIS_FOUND ParMETIS_INCLUDE_DIR ParMETIS_LIBRARIES )
+
+  include(FindPackageHandleStandardArgs)
+  find_package_handle_standard_args( ParMETIS
+    REQUIRED_VARS ParMETIS_LIBRARIES ParMETIS_INCLUDE_DIR METIS_FOUND 
+    VERSION_VAR ParMETIS_VERSION_STRING
+    HANDLE_COMPONENTS
+  )
 endif()
-
-# Check ILP64 (Inherits from METIS)
-if( METIS_FOUND )
-
-  set( ParMETIS_USES_ILP64 ${METIS_USES_ILP64} )
-
-endif()
-
-# Handle components
-if( ParMETIS_USES_ILP64 )
-  set( ParMETIS_ilp64_FOUND TRUE )
-endif()
-
-
-
-
-# Determine if we've found ParMETIS
-mark_as_advanced( ParMETIS_FOUND ParMETIS_INCLUDE_DIR ParMETIS_LIBRARIES )
-
-include(FindPackageHandleStandardArgs)
-find_package_handle_standard_args( ParMETIS
-  REQUIRED_VARS ParMETIS_LIBRARIES ParMETIS_INCLUDE_DIR METIS_FOUND 
-  VERSION_VAR ParMETIS_VERSION_STRING
-  HANDLE_COMPONENTS
-)
 
 # Export target
 if( ParMETIS_FOUND AND NOT TARGET ParMETIS::parmetis )
